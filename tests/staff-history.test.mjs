@@ -13,9 +13,10 @@ const f=url('fixtures');
 compile('lib/tips.ts','tips-lib');compile('lib/staff-bootstrap.ts','bootstrap',{'cloudflare:workers':f,'./staff-session':url('session'),'./staff-roles':url('roles')});compile('lib/staff-session.ts','session');compile('lib/catalog.ts','catalog');compile('lib/booking.ts','booking');compile('lib/staff-roles.ts','roles');compile('lib/bills.ts','bill-validation');compile('lib/schedule.ts','schedule-lib');
 compile('app/staff-auth.ts','auth',{'next/headers':f,'cloudflare:workers':f,'../lib/staff-session':url('session'),'../lib/staff-roles':url('roles')});
 compile('lib/staff-data.ts','data',{'cloudflare:workers':f,'./staff-roles':url('roles'),'./staff-session':url('session')});
-compile('app/api/staff/session/route.ts','login',{'../../../../lib/staff-bootstrap':url('bootstrap'),'cloudflare:workers':f,'../../../../lib/staff-session':url('session')});
+compile('lib/request-rate.ts','request-rate',{'./staff-session':url('session')});
+compile('app/api/staff/session/route.ts','login',{'../../../../lib/request-rate':url('request-rate'),'../../../../lib/staff-bootstrap':url('bootstrap'),'cloudflare:workers':f,'../../../../lib/staff-session':url('session')});
 for(const n of ['members','shifts','revenue','profile','activity','bills','schedule','tips','closing','assistant-rates','tip-history'])compile('app/api/staff/'+n+'/route.ts',n,{'cloudflare:workers':f,'../../../staff-auth':url('auth'),'../../../../lib/staff-session':url('session'),'../../../../lib/staff-roles':url('roles'),'../../../../lib/staff-bootstrap':url('bootstrap'),'../../../../lib/staff-data':url('data'),'../../../../lib/bills':url('bill-validation'),'../../../../lib/catalog':url('catalog'),'../../../../lib/schedule':url('schedule-lib'),'../../../../lib/tips':url('tips-lib')});
-compile('app/api/reservations/route.ts','reservations',{'cloudflare:workers':f,'../../staff-auth':url('auth'),'../../../lib/catalog':url('catalog'),'../../../lib/booking':url('booking')});
+compile('app/api/reservations/route.ts','reservations',{'../../../lib/request-rate':url('request-rate'),'cloudflare:workers':f,'../../staff-auth':url('auth'),'../../../lib/catalog':url('catalog'),'../../../lib/booking':url('booking')});
 const {env,state}=await import(f),session=await import(url('session')),auth=await import(url('auth')),login=await import(url('login')),members=await import(url('members')),reservations=await import(url('reservations')),shifts=await import(url('shifts')),profile=await import(url('profile')),activity=await import(url('activity')),bills=await import(url('bills')),revenue=await import(url('revenue')),schedule=await import(url('schedule')),scheduleLib=await import(url('schedule-lib'));
 const assistantRates=await import(url('assistant-rates')),tipHistory=await import(url('tip-history')),closing=await import(url('closing')),tips=await import(url('tips')),tipsLib=await import(url('tips-lib')),bootstrap=await import(url('bootstrap'));
 const sql=new DatabaseSync(':memory:');for(const file of readdirSync('drizzle').filter(x=>x.endsWith('.sql')).sort())sql.exec(readFileSync('drizzle/'+file,'utf8'));
@@ -147,5 +148,30 @@ try{
  state.token=staff.host.token;const d=await expect(reservations.GET(request('/api/reservations?staff=1&q='+encodeURIComponent('անի')+'&date=2025-05-10&time=19:30&table=floor50-53&scope=history')),200);assert.equal(d.total,1);assert.equal(d.reservations[0].id,'old-ani');assert.equal((await expect(reservations.GET(request('/api/reservations?staff=1&page=13')),200)).pages,13);await expect(reservations.GET(request('/api/reservations?staff=1&time=99:00')),400);
  state.token=staff.waiter.token.replace(staff.waiter.id,'manager');assert.equal(await auth.currentStaff(),null);assert.equal(await session.validStaffSession(staff.waiter.token,env.STAFF_SESSION_KEY,Date.now()+session.sessionSeconds*1000+10),false);
  state.token=managerToken;const rotated=await expect(members.POST(request('/api/staff/members',{id:staff.host.id,action:'rotate',code:'987654'})),200);assert.equal(rotated.code,'987654');state.token=staff.host.token;assert.equal(await auth.currentStaff(),null);state.token=managerToken;await expect(members.POST(request('/api/staff/members',{id:staff.waiter.id,action:'disable'})),200);state.token=staff.waiter.token;assert.equal(await auth.currentStaff(),null);
+ // Login guessing stays bounded across concurrent requests and separate buckets.
+ const rate=await import(url('request-rate'));
+ const burst=await Promise.all(Array.from({length:20},()=>rate.consumeRequestLimit(env.DB,'test-burst','test-ip',5,900,1_800_000)));
+ assert.equal(burst.filter(r=>r.allowed).length,5);
+ assert.equal((await rate.consumeRequestLimit(env.DB,'test-burst','test-ip',5,900,2_700_000)).allowed,true);
+ assert.equal((await rate.consumeRequestLimit(env.DB,'test-burst','another-ip',5,900,2_700_000)).allowed,true);
+ // Public spam is rejected before inserting a reservation, without blocking staff bookings.
+ state.token=undefined;
+ const guestBody={tableId:'any',start:Date.now()+86400000,end:Date.now()+90000000,guests:2,name:'Test Guest',phone:'+37477000000'};
+ const guestRequest=()=>new Request('https://test.local/api/reservations',{method:'POST',headers:{origin:'https://test.local','content-type':'application/json','cf-connecting-ip':'192.0.2.100'},body:JSON.stringify(guestBody)});
+ for(let i=0;i<5;i++)await expect(reservations.POST(guestRequest()),201);
+ const beforeSpam=sql.prepare('SELECT count(*) n FROM reservations').get().n;
+ const denied=await reservations.POST(guestRequest());assert.equal(denied.status,429);assert.ok(Number(denied.headers.get('retry-after'))>0);
+ assert.equal(sql.prepare('SELECT count(*) n FROM reservations').get().n,beforeSpam);
+ state.token=managerToken;await expect(reservations.POST(guestRequest()),201);
+ // The eleventh login attempt is blocked even with the correct code, and another IP is isolated.
+ const loginRequest=(ip,password)=>new Request('https://test.local/api/staff/session',{method:'POST',headers:{origin:'https://test.local','content-type':'application/json','cf-connecting-ip':ip},body:JSON.stringify({password})});
+ for(let i=0;i<10;i++)await expect(login.POST(loginRequest('192.0.2.101','wrong')),401);
+ await expect(login.POST(loginRequest('192.0.2.101','004321')),429);
+ await expect(login.POST(loginRequest('192.0.2.102','004321')),200);
+ // Both availability and date-sorted history have covering/indexed query paths.
+ const plan=sql.prepare("EXPLAIN QUERY PLAN SELECT table_id,status FROM reservations WHERE table_id!='any' AND status IN ('pending','confirmed') AND start<? AND end>?").all(Date.now()+86400000,Date.now());
+ assert.ok(plan.some(r=>r.detail.includes('reservation_status_time')));
+ const historyPlan=sql.prepare('EXPLAIN QUERY PLAN SELECT * FROM reservations WHERE start>=? AND start<? ORDER BY start DESC,id DESC LIMIT 50').all(0,Date.now());
+ assert.ok(historyPlan.some(r=>r.detail.includes('reservation_history_time')));
  console.log('PASS: six roles, unique six-digit codes, leading zeros, permissions, own-profile privacy, shifts, month clipping, atomic audit, team-specific schedules, private drafts, automatic timed publication, bill totals, split payments, duplicate/stale protection, revenue overrides, reservation history, code rotation and session revocation.');
 }finally{sql.close();rmSync(dir,{recursive:true,force:true})}

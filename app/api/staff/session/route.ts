@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {initializePendingRoster,initializeConfiguredCode} from '../../../../lib/staff-bootstrap';
 import {createStaffSession,passwordDigest,equalDigest,staffCookie,sessionSeconds,codeDigest} from '../../../../lib/staff-session';
+import {consumeRequestLimit} from '../../../../lib/request-rate';
 export const dynamic='force-dynamic';
 const json=(data:unknown,status=200,headers:Record<string,string>={})=>Response.json(data,{status,headers:{'Cache-Control':'no-store',...headers}});
 function trusted(req:Request){return req.headers.get('origin')===new URL(req.url).origin}
@@ -8,11 +9,9 @@ export async function POST(req:Request){
  if(!trusted(req))return json({error:'Անթույլատրելի հարցում։'},403);
  if(!env.STAFF_PASSWORD_HASH||!env.STAFF_SESSION_KEY||!env.DB)return json({error:'Աշխատակցի մուտքը դեռ կարգավորված չէ։'},503);
  try{
- const now=Date.now(),ip=req.headers.get('cf-connecting-ip')||'unknown';
- const digest=await passwordDigest(ip),bucket=Math.floor(now/900000),rateKey=`staff-login:${bucket}:${digest}`;
- await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'staff-login:%' AND json_extract(value,'$.expires') < ?").bind(now).run();
- const rate=await env.DB.prepare("INSERT INTO settings (key,value) VALUES (?,json_object('attempts',1,'expires',?)) ON CONFLICT(key) DO UPDATE SET value=json_set(settings.value,'$.attempts',json_extract(settings.value,'$.attempts')+1) RETURNING json_extract(value,'$.attempts') AS attempts").bind(rateKey,(bucket+1)*900000).first<{attempts:number}>();
- if(!rate||rate.attempts>10)return json({error:'Շատ փորձեր են կատարվել։ Փորձեք կրկին 15 րոպեից։'},429,{'Retry-After':'900'});
+ const ip=req.headers.get('cf-connecting-ip')||'unknown';
+ const rate=await consumeRequestLimit(env.DB,'staff-login',ip,10,900);
+ if(!rate.allowed)return json({error:'Շատ փորձեր են կատարվել։ Փորձեք կրկին 15 րոպեից։'},429,{'Retry-After':String(rate.retryAfter)});
  const body=await req.json() as {password?:unknown};
  if(typeof body.password!=='string'||body.password.length>256)return json({error:'Մուտքի կոդը սխալ է։'},401);
  let identity='manager';

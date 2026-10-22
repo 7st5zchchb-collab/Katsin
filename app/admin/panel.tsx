@@ -66,7 +66,7 @@ export default function AdminPanel({ staffName, manager, embedded=false }: {
         if (id === requestId.current)
             setLoading(false);
     } }
-    useEffect(() => { setLoading(true); const debounce = setTimeout(load, 250), i = setInterval(load, 5000); return () => { clearTimeout(debounce); clearInterval(i); requestId.current++; }; }, [query]);
+    useEffect(() => { setLoading(true); const debounce = setTimeout(load, 250), poll=()=>{if(!document.hidden)void load()}, i = setInterval(poll, 5000); document.addEventListener('visibilitychange',poll); return () => { clearTimeout(debounce); clearInterval(i); document.removeEventListener('visibilitychange',poll); requestId.current++; }; }, [query]);
     function reset() { setSearch(''); setDate(''); setTime(''); setTable(''); setFilter('all'); setScope('all'); setPage(1); }
     async function change(id: string, status: string, tableId?: string) { setPending(id); try {
         const r = await fetch('/api/reservations', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status, tableId }) });

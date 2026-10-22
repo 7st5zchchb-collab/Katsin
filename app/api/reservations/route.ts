@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { hasStaffAccess, currentStaff } from '../../staff-auth';
 import { tables } from '../../../lib/catalog';
 import { validWindow } from '../../../lib/booking';
+import {consumeRequestLimit} from '../../../lib/request-rate';
 export const dynamic='force-dynamic';
 const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 function sameOrigin(req:Request){return req.headers.get('origin')===new URL(req.url).origin;}
@@ -32,12 +33,19 @@ export async function GET(req:Request){
 export async function POST(req:Request){
  if(!sameOrigin(req))return json({error:'Անթույլատրելի հարցում։'},403);
  try{
+ const actor=await currentStaff();
+ if(!actor){
+  const ip=req.headers.get('cf-connecting-ip')||'unknown';
+  for(const [scope,maximum,seconds] of [['booking-short',5,900],['booking-day',20,86400]] as const){
+   const limit=await consumeRequestLimit(env.DB!,scope,ip,maximum,seconds);
+   if(!limit.allowed)return Response.json({error:'Շատ հայտեր են ուղարկվել։ Փորձեք ավելի ուշ կամ զանգահարեք մեզ։'},{status:429,headers:{'Cache-Control':'no-store','Retry-After':String(limit.retryAfter)}});
+  }
+ }
  const b=await req.json() as Record<string,unknown>;
  const any=b.tableId==='any',table=tables.find(t=>t.id===b.tableId);const start=Number(b.start),end=Number(b.end),guests=Number(b.guests);
  const name=String(b.name||'').trim(),phone=String(b.phone||'').replace(/[\s()-]/g,''),occasion=String(b.occasion||'').trim(),message=String(b.note||'').trim();
  if((!any&&!table)||!validWindow(start,end)||!Number.isInteger(guests)||guests<1||guests>(any?50:table!.capacity)||name.length<3||name.length>100||!/^\+?[0-9]{8,15}$/.test(phone)||message.length>1000||occasion.length>100)return json({error:'Ստուգեք անունը, հեռախոսահամարը, ժամը և հյուրերի քանակը։'},400);
  const confirmed=b.status==='confirmed';
- const actor=await currentStaff();
  if(confirmed&&(!await hasStaffAccess()||any))return json({error:'Հաստատելու համար ընտրեք սեղան և մուտք գործեք կառավարչի հաշվով։'},403);
  const id=crypto.randomUUID(),tableId=any?'any':table!.id,status=confirmed?'confirmed':'pending',note=[any?'Ընտրություն՝ ցանկացած սեղան · անվճար (0 ֏)։ Սեղանը տրամադրում է աշխատակիցը։':`Ընտրություն՝ կոնկրետ սեղան №${table!.number} · 20 000 ֏։ Վճարման պայմանները՝ զանգով։`,occasion?'Առիթ՝ '+occasion:'',message].filter(Boolean).join('\n');
  const r=await env.DB!.prepare("INSERT INTO reservations (id,table_id,start,end,guests,name,phone,note,status,created_at,actor_id,actor_name,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ?='any' OR NOT EXISTS (SELECT 1 FROM reservations WHERE table_id=? AND status IN ('pending','confirmed') AND start < ? AND end > ?)").bind(id,tableId,start,end,guests,name,phone,note,status,Date.now(),actor?.id||null,actor?.name||null,Date.now(),tableId,tableId,end,start).run();

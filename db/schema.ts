@@ -1,7 +1,7 @@
 import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
 export const reservations = sqliteTable("reservations", {
  id:text("id").primaryKey(), tableId:text("table_id").notNull(), start:integer("start").notNull(), end:integer("end").notNull(), guests:integer("guests").notNull(), name:text("name").notNull(), phone:text("phone").notNull(), note:text("note").notNull().default(""), status:text("status").notNull().default("pending"), createdAt:integer("created_at").notNull(), actorId:text("actor_id"), actorName:text("actor_name"), updatedAt:integer("updated_at").notNull().default(0),
-},(t)=>[index("reservation_availability").on(t.tableId,t.start,t.end,t.status)]);
+},(t)=>[index("reservation_availability").on(t.tableId,t.start,t.end,t.status),index('reservation_status_time').on(t.status,t.start,t.end,t.tableId),index('reservation_history_time').on(t.start,t.id)]);
 export const settings=sqliteTable("settings",{key:text("key").primaryKey(),value:text("value").notNull()});
 
 export const staffShifts=sqliteTable('staff_shifts',{
