@@ -146,6 +146,19 @@ try{
  // Historical reservation filtering and pagination stay available to hosts.
  const insert=sql.prepare('INSERT INTO reservations(id,table_id,start,end,guests,name,phone,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');const old=Date.parse('2025-05-10T19:30:00+04:00');for(let i=0;i<620;i++)insert.run('new-'+i,'coupe1-11',Date.now()+i*86400000,Date.now()+i*86400000+3600000,2,'Հյուր '+i,'+37477000000','','confirmed',Date.now());insert.run('old-ani','floor50-53',old,old+3600000,4,'Անի Սարգսյան','+37477123456','','cancelled',old);
  state.token=staff.host.token;const d=await expect(reservations.GET(request('/api/reservations?staff=1&q='+encodeURIComponent('անի')+'&date=2025-05-10&time=19:30&table=floor50-53&scope=history')),200);assert.equal(d.total,1);assert.equal(d.reservations[0].id,'old-ani');assert.equal((await expect(reservations.GET(request('/api/reservations?staff=1&page=13')),200)).pages,13);await expect(reservations.GET(request('/api/reservations?staff=1&time=99:00')),400);
+ // Supplemental cashiers are pending, idempotent and preserve existing accounts.
+ state.token=managerToken;
+ env.STAFF_HOST_ROSTER=JSON.stringify([]);await bootstrap.initializePendingRoster('Test Manager');
+ env.STAFF_CASHIER_ROSTER=JSON.stringify([{id:'pending-cashier-fixture',firstName:'Pending',lastName:'Cashier',role:'cashier',scheduleGroups:[]},{id:'duplicate-cashier-fixture',firstName:'Test',lastName:'cashier',role:'cashier',scheduleGroups:[]}]);
+ await bootstrap.initializePendingRoster('Test Manager');await bootstrap.initializePendingRoster('Test Manager');
+ const seededCashier=JSON.parse(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:pending-cashier-fixture').value);
+ assert.equal(seededCashier.role,'cashier');assert.equal(seededCashier.active,false);assert.equal(seededCashier.codeHash,'');
+ assert.equal(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:duplicate-cashier-fixture'),undefined);
+ assert.equal(sql.prepare("SELECT count(*) n FROM staff_activity WHERE entity_id='pending-cashier-fixture'").get().n,1);
+ const preservedCashier=JSON.parse(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:'+staff.cashier.id).value);assert.equal(preservedCashier.active,true);assert.ok(preservedCashier.codeHash);
+ env.STAFF_CASHIER_ROSTER=JSON.stringify([{id:'bad-cashier-fixture',firstName:'Not',lastName:'Cashier',role:'manager',scheduleGroups:[]}]);await assert.rejects(bootstrap.initializePendingRoster('Test Manager'));
+ assert.equal(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:bad-cashier-fixture'),undefined);
+ delete env.STAFF_CASHIER_ROSTER;delete env.STAFF_HOST_ROSTER;
  // Host schedules use explicit times/off only; drafts and editing remain restricted.
  const hostWeek=scheduleLib.mondayFor(),hostDays=scheduleLib.weekDays(hostWeek);
  state.token=staff.host.token;

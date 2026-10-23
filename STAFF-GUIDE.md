@@ -109,3 +109,6 @@ The weekly schedule includes a host group alongside assistants and waiters. Host
 Managers/directors edit host drafts, publish immediately or schedule publication, using the same revision checks and audit trail as the other groups. Hosts see the published host schedule, not drafts or other groups. A manager may delegate the host schedule specifically through Team & access without granting management or other schedule permissions.
 
 An optional STAFF_HOST_ROSTER runtime secret supplies reviewed host names only. It adds pending host identities with no login codes, preserves existing host names/accounts, and is imported once with a durable marker. No staff names or photograph-derived shifts are included in source control. The supplied photo shows dates without a month/year, and its last handwritten name is unclear; do not auto-import a dated week or guess that name. Managers can fill exact hours and additional names through the existing staff tools.
+
+
+STAFF_CASHIER_ROSTER supports reviewed cashier names through the same supplemental import. Each role has its own durable marker; an already-imported host roster does not prevent a cashier import. Supplemental cashiers remain inactive with no code, and existing cashier identities/credentials are preserved. Only the configured role is accepted; source and tests contain no real cashier names.

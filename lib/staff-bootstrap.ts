@@ -3,16 +3,17 @@ import {validRole,roleLabels,StaffRole} from './staff-roles';
 import {codeDigest,passwordDigest,equalDigest} from './staff-session';
 // Runtime-only roster; never put staff codes or live staff data in source control.
 export async function initializePendingRoster(actorName:string,actorId='manager'){
- const runtime=env as unknown as {STAFF_INITIAL_ROSTER?:string,STAFF_HOST_ROSTER?:string};
+ const runtime=env as unknown as {STAFF_INITIAL_ROSTER?:string,STAFF_HOST_ROSTER?:string,STAFF_CASHIER_ROSTER?:string};
  if(runtime.STAFF_INITIAL_ROSTER)await initializeRoster(runtime.STAFF_INITIAL_ROSTER,actorName,actorId);
- if(runtime.STAFF_HOST_ROSTER){
-  const hosts=JSON.parse(runtime.STAFF_HOST_ROSTER) as {id:string,firstName:string,lastName:string,role:StaffRole,scheduleGroups:('assistant'|'waiter'|'host')[]}[];
-  if(!Array.isArray(hosts)||hosts.length>100||hosts.some(p=>p.role!=='host'))throw Error('Invalid host roster');
-  const marker='staff-host-roster-applied:'+await passwordDigest(runtime.STAFF_HOST_ROSTER);
-  if(await env.DB!.prepare('SELECT value FROM settings WHERE key=?').bind(marker).first())return;
-  const existing=await env.DB!.prepare("SELECT value FROM settings WHERE key >= 'staff-member:' AND key < 'staff-member;' AND json_extract(value,'$.role')='host'").all<{value:string}>();
+ for(const [role,raw] of [['host',runtime.STAFF_HOST_ROSTER],['cashier',runtime.STAFF_CASHIER_ROSTER]] as const){
+  if(!raw)continue;
+  const people=JSON.parse(raw) as {id:string,firstName:string,lastName:string,role:StaffRole,scheduleGroups:('assistant'|'waiter'|'host')[]}[];
+  if(!Array.isArray(people)||people.length>100||people.some(p=>p.role!==role))throw Error('Invalid supplemental roster');
+  const marker='staff-'+role+'-roster-applied:'+await passwordDigest(raw);
+  if(await env.DB!.prepare('SELECT value FROM settings WHERE key=?').bind(marker).first())continue;
+  const existing=await env.DB!.prepare("SELECT value FROM settings WHERE key >= 'staff-member:' AND key < 'staff-member;' AND json_extract(value,'$.role')=?").bind(role).all<{value:string}>();
   const names=new Set(existing.results.map(r=>JSON.parse(r.value).name));
-  const additional=hosts.filter(p=>!names.has([p.firstName,p.lastName].filter(Boolean).join(' ')));
+  const additional=people.filter(p=>!names.has([p.firstName,p.lastName].filter(Boolean).join(' ')));
   await initializeRoster(JSON.stringify(additional),actorName,actorId,marker);
  }
 }
