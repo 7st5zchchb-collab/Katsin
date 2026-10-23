@@ -146,6 +146,37 @@ try{
  // Historical reservation filtering and pagination stay available to hosts.
  const insert=sql.prepare('INSERT INTO reservations(id,table_id,start,end,guests,name,phone,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');const old=Date.parse('2025-05-10T19:30:00+04:00');for(let i=0;i<620;i++)insert.run('new-'+i,'coupe1-11',Date.now()+i*86400000,Date.now()+i*86400000+3600000,2,'Հյուր '+i,'+37477000000','','confirmed',Date.now());insert.run('old-ani','floor50-53',old,old+3600000,4,'Անի Սարգսյան','+37477123456','','cancelled',old);
  state.token=staff.host.token;const d=await expect(reservations.GET(request('/api/reservations?staff=1&q='+encodeURIComponent('անի')+'&date=2025-05-10&time=19:30&table=floor50-53&scope=history')),200);assert.equal(d.total,1);assert.equal(d.reservations[0].id,'old-ani');assert.equal((await expect(reservations.GET(request('/api/reservations?staff=1&page=13')),200)).pages,13);await expect(reservations.GET(request('/api/reservations?staff=1&time=99:00')),400);
+ // Host schedules use explicit times/off only; drafts and editing remain restricted.
+ const hostWeek=scheduleLib.mondayFor(),hostDays=scheduleLib.weekDays(hostWeek);
+ state.token=staff.host.token;
+ let hostView=await expect(schedule.GET(request('/api/staff/schedule?group=host&week='+hostWeek)),200);
+ assert.equal(hostView.canEdit,false);assert.equal(hostView.draft,undefined);
+ await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:0,action:'draft',entries:{}})),403);
+ state.token=staff.waiter.token;await expect(schedule.GET(request('/api/staff/schedule?group=host')),403);
+ state.token=managerToken;
+ env.STAFF_HOST_ROSTER=JSON.stringify([{id:'pending-host-fixture',firstName:'Pending',lastName:'Host',role:'host',scheduleGroups:[]},{id:'duplicate-host-fixture',firstName:'Test',lastName:'host',role:'host',scheduleGroups:[]}]);
+ hostView=await expect(schedule.GET(request('/api/staff/schedule?group=host&week='+hostWeek)),200);
+ assert.equal(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:duplicate-host-fixture'),undefined);
+ const hostSeed=JSON.parse(sql.prepare('SELECT value FROM settings WHERE key=?').get('staff-member:pending-host-fixture').value);assert.equal(hostSeed.active,false);assert.equal(hostSeed.codeHash,'');
+ await bootstrap.initializePendingRoster('Test Manager');assert.equal(sql.prepare("SELECT count(*) n FROM staff_activity WHERE entity_id='pending-host-fixture'").get().n,1);
+ delete env.STAFF_HOST_ROSTER;
+ const hostEntries=Object.fromEntries(hostView.roster.map(p=>[p.id,Object.fromEntries(hostDays.map((day,i)=>[day,i===1?{kind:'off'}:{kind:'shift',start:'16:00',end:'00:00'}]))]));
+ assert.deepEqual(scheduleLib.validateEntries(hostEntries,hostView.roster.map(p=>p.id),hostWeek,true,'host'),hostEntries);
+ for(const bad of [{kind:'code',code:'SH'},{kind:'shift',start:'16:00',end:'24:00'},{kind:'shift',start:'12:00',end:'12:00'},{kind:'shift',start:'',end:'23:00'},{kind:'shift',start:'12:00',end:'23:00',closing:true}]){
+  const invalid=structuredClone(hostEntries);invalid[staff.host.id][hostDays[0]]=bad;
+  await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:0,action:'draft',entries:invalid})),400);
+ }
+ await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:0,action:'draft',entries:hostEntries})),200);
+ state.token=staff.host.token;hostView=await expect(schedule.GET(request('/api/staff/schedule?group=host&week='+hostWeek)),200);assert.equal(hostView.published,null);assert.equal(hostView.revision,undefined);
+ state.token=managerToken;await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:1,action:'publish',entries:hostEntries})),200);
+ await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:1,action:'draft',entries:hostEntries})),409);
+ state.token=staff.host.token;hostView=await expect(schedule.GET(request('/api/staff/schedule?group=host&week='+hostWeek)),200);assert.deepEqual(hostView.published.entries[staff.host.id][hostDays[0]],{kind:'shift',start:'16:00',end:'00:00'});assert.deepEqual(hostView.published.entries[staff.host.id][hostDays[1]],{kind:'off'});assert.equal(hostView.draft,undefined);
+ assert.deepEqual(scheduleLib.departureRanks(hostView.roster,hostDays[0],hostEntries,'host'),{});
+ state.token=managerToken;
+ await expect(members.POST(request('/api/staff/members',{id:staff.host.id,action:'update',firstName:'Test',lastName:'host',role:'host',scheduleGroups:['host']})),200);
+ state.token=staff.host.token;assert.deepEqual((await auth.currentStaff()).scheduleGroups,['host']);
+ await expect(schedule.POST(request('/api/staff/schedule',{group:'host',week:hostWeek,revision:2,action:'draft',entries:hostEntries})),200);
+ await expect(schedule.POST(request('/api/staff/schedule',{group:'assistant',week:hostWeek,revision:0,action:'draft',entries:{}})),403);
  state.token=staff.waiter.token.replace(staff.waiter.id,'manager');assert.equal(await auth.currentStaff(),null);assert.equal(await session.validStaffSession(staff.waiter.token,env.STAFF_SESSION_KEY,Date.now()+session.sessionSeconds*1000+10),false);
  state.token=managerToken;const rotated=await expect(members.POST(request('/api/staff/members',{id:staff.host.id,action:'rotate',code:'987654'})),200);assert.equal(rotated.code,'987654');state.token=staff.host.token;assert.equal(await auth.currentStaff(),null);state.token=managerToken;await expect(members.POST(request('/api/staff/members',{id:staff.waiter.id,action:'disable'})),200);state.token=staff.waiter.token;assert.equal(await auth.currentStaff(),null);
  // Login guessing stays bounded across concurrent requests and separate buckets.

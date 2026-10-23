@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:workers';
 import {currentStaff} from '../../../staff-auth';
 import {StaffMember} from '../../../../lib/staff-roles';
+import {initializePendingRoster} from '../../../../lib/staff-bootstrap';
 import {staffJson as json,trustedStaffRequest} from '../../../../lib/staff-data';
 import {canEditSchedule,canViewSchedule,mondayFor,validWeek,visibleSnapshot,validateEntries,WeeklySchedule,validGroup,ScheduleGroup} from '../../../../lib/schedule';
 const empty=():WeeklySchedule=>({revision:0,draft:{},published:null,scheduled:null,updatedAt:0,updatedBy:''});
@@ -8,6 +9,7 @@ async function roster(group:ScheduleGroup){const r=await env.DB!.prepare("SELECT
 export async function GET(req:Request){try{
  const who=await currentStaff(),u=new URL(req.url),group=u.searchParams.get('group')||'assistant';if(!validGroup(group))return json({error:'Սխալ բաժին։'},400);if(!who||!canViewSchedule(who,group))return json({error:'Մուտքը սահմանափակ է։'},403);
  const week=u.searchParams.get('week')||mondayFor();if(!validWeek(week))return json({error:'Ընտրեք շաբաթվա երկուշաբթի օրը։'},400);
+ if(group==='host'&&who.manager)await initializePendingRoster(who.name,who.id);
  const r=await env.DB!.prepare('SELECT value FROM settings WHERE key=?').bind('staff-schedule:'+group+':'+week).first<{value:string}>();
  const s=r?JSON.parse(r.value) as WeeklySchedule:empty(),visible=visibleSnapshot(s,Date.now()),editable=canEditSchedule(who,group);
  let futureEntries:Record<string,Record<string,unknown>>={};{const rows=await env.DB!.prepare("SELECT key,value FROM settings WHERE key LIKE ? AND key>? ORDER BY key LIMIT 14").bind('staff-schedule:'+group+':%','staff-schedule:'+group+':'+week).all<{key:string,value:string}>();for(const row of rows.results){const snap=visibleSnapshot(JSON.parse(row.value) as WeeklySchedule,Date.now());if(snap)for(const [id,days] of Object.entries(snap.entries))futureEntries[id]={...futureEntries[id],...days};}}

@@ -12,6 +12,6 @@ export async function currentStaff():Promise<StaffIdentity|null>{
  if(!row)return null;const m=JSON.parse(row.value) as StaffMember;
  if(!m.active||Number(parts[0])-8*60*60*1000<(m.revokedBefore||0))return null;
  const role=validRole(m.role)?m.role:'host';
- return {id:m.id,name:m.name,role,manager:isManager(role),scheduleGroups:Array.isArray(m.scheduleGroups)?m.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'):[]};
+ return {id:m.id,name:m.name,role,manager:isManager(role),scheduleGroups:Array.isArray(m.scheduleGroups)?m.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'||g==='host'):[]};
 }
 export async function hasStaffAccess(){const who=await currentStaff();return !!who&&canBook(who.role)}

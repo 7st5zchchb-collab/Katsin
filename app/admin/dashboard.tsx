@@ -16,7 +16,7 @@ import {canViewSchedule} from '../../lib/schedule';
 import {CalendarDays} from 'lucide-react';
 export default function Dashboard({who}:{who:StaffIdentity}){const {t}=useLanguage();const [tab,setTab]=useState(canCash(who.role)&&!who.manager?'cashier':canBook(who.role)?'bookings':'profile'),[error,setError]=useState('');const showActivity=canBook(who.role)||canCash(who.role);
  async function logout(){try{const r=await fetch('/api/staff/session',{method:'DELETE'});if(!r.ok)throw Error();window.location.assign('/admin')}catch{setError(t('Փորձեք կրկին։'))}}
- const showSchedule=canViewSchedule(who,'assistant')||canViewSchedule(who,'waiter');
+ const showSchedule=canViewSchedule(who,'assistant')||canViewSchedule(who,'waiter')||canViewSchedule(who,'host');
  const showTips=who.manager||['waiter','assistant'].includes(who.role);
  const showClosing=who.manager||who.role==='waiter';
  const showAssistantRates=who.manager||!!who.scheduleGroups?.includes('assistant');

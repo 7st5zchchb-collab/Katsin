@@ -1,7 +1,7 @@
 export const staffRoles=['director','manager','host','cashier','waiter','assistant'] as const;
 export type StaffRole=typeof staffRoles[number];
-export type StaffMember={id:string,name:string,active:boolean,codeHash:string,createdAt:number,role?:StaffRole,firstName?:string,lastName?:string,jobTitle?:string,scheduleGroups?:('assistant'|'waiter')[],revokedBefore?:number};
-export type StaffIdentity={id:string,name:string,role:StaffRole,manager:boolean,scheduleGroups?:('assistant'|'waiter')[]};
+export type StaffMember={id:string,name:string,active:boolean,codeHash:string,createdAt:number,role?:StaffRole,firstName?:string,lastName?:string,jobTitle?:string,scheduleGroups?:('assistant'|'waiter'|'host')[],revokedBefore?:number};
+export type StaffIdentity={id:string,name:string,role:StaffRole,manager:boolean,scheduleGroups?:('assistant'|'waiter'|'host')[]};
 export const isManager=(role:StaffRole)=>role==='director'||role==='manager';
 export const canBook=(role:StaffRole)=>isManager(role)||role==='host';
 export const validRole=(role:unknown):role is StaffRole=>typeof role==='string'&&staffRoles.includes(role as StaffRole);

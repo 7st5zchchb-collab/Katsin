@@ -1,6 +1,6 @@
 import type {StaffIdentity} from './staff-roles';
-export type ScheduleGroup='assistant'|'waiter';
-export const validGroup=(g:unknown):g is ScheduleGroup=>g==='assistant'||g==='waiter';
+export type ScheduleGroup='assistant'|'waiter'|'host';
+export const validGroup=(g:unknown):g is ScheduleGroup=>g==='assistant'||g==='waiter'||g==='host';
 export const assistantShiftCodes=['SH','11','1'] as const;
 export type AssistantShiftCode=typeof assistantShiftCodes[number];
 export type ScheduleCell=({kind:'off'}|{kind:'shift',start:string,end:string}|{kind:'code',code:AssistantShiftCode})&{closing?:boolean};
@@ -25,7 +25,7 @@ export function validateEntries(raw:unknown,ids:string[],week:string,complete:bo
    if(!days.includes(day)||!cell||typeof cell!=='object')return null;
    if(cell.closing!==undefined&&typeof cell.closing!=='boolean'||cell.closing===true&&(group!=='waiter'||cell.kind==='off'||cell.kind==='code'&&cell.code==='11'||cell.kind==='shift'&&cell.start==='11:00'))return null;
    if(cell.kind==='off')clean[id][day]={kind:'off'};
-   else if(validGroup(group)&&cell.kind==='code'&&assistantShiftCodes.includes(cell.code as AssistantShiftCode))clean[id][day]={kind:'code',code:cell.code as AssistantShiftCode};
+   else if((group==='assistant'||group==='waiter')&&cell.kind==='code'&&assistantShiftCodes.includes(cell.code as AssistantShiftCode))clean[id][day]={kind:'code',code:cell.code as AssistantShiftCode};
    else if(cell.kind==='shift'&&typeof cell.start==='string'&&typeof cell.end==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(cell.start)&&/^([01]\d|2[0-3]):[0-5]\d$/.test(cell.end)&&cell.start!==cell.end)clean[id][day]={kind:'shift',start:cell.start,end:cell.end};
    else return null;
    if(group==='waiter'&&cell.closing===true)clean[id][day].closing=true;
@@ -51,6 +51,7 @@ export function departureOrder(ids:string[],day:string,entries:ScheduleEntries):
 export function closingRoster(snapshot:ScheduleSnapshot|null,day:string){return (snapshot?.roster||[]).filter(p=>{const c=snapshot?.entries[p.id]?.[day];return c&&c.kind!=='off'&&c.closing===true}).map(p=>({id:p.id,name:p.name}));}
 
 export function departureRanks(people:{id:string}[],day:string,entries:ScheduleEntries,group:ScheduleGroup):Record<string,number>{
+ if(group==='host')return {};
  const early=people.filter(p=>shiftCode(entries[p.id]?.[day])==='11'&&!entries[p.id]?.[day]?.closing);if(early.length!==2)return {};
  const ranks:Record<string,number>={},pair=departureOrder(early.map(p=>p.id),day,entries);if(pair.reason==='decided'){ranks[pair.first!]=1;ranks[pair.second!]=2;}if(group==='assistant')return ranks;
  const rest=people.filter(p=>{const c=entries[p.id]?.[day];return c&&c.kind!=='off'&&!c.closing&&shiftCode(c)!=='11'});

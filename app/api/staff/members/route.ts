@@ -29,7 +29,7 @@ export async function POST(req:Request){
   if(body.action==='disable'){m.active=false;m.revokedBefore=now;ops.push(env.DB!.prepare('DELETE FROM settings WHERE key=?').bind('staff-code:'+m.codeHash))}
   if(body.action==='update'){
    const name=firstName?[firstName,lastName].filter(Boolean).join(' '):typeof body.name==='string'?body.name.trim():'';if(name.length<2||name.length>80||!validRole(body.role))return json({error:'Ստուգեք անունը և աշխատակցի դերը։'},400);
-   m.name=name;m.role=body.role;m.scheduleGroups=Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'):m.scheduleGroups||[];m.firstName=firstName;m.lastName=lastName;m.jobTitle=jobTitle;
+   m.name=name;m.role=body.role;m.scheduleGroups=Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'||g==='host'):m.scheduleGroups||[];m.firstName=firstName;m.lastName=lastName;m.jobTitle=jobTitle;
   }
   if(body.action==='rotate'){
    code=await availableCode(body.code)||undefined;if(!code)return json({error:'Կոդը պետք է լինի 6 թվանշան և չկրկնվի։'},409);const old=m.codeHash;m.codeHash=await codeDigest(code,env.STAFF_SESSION_KEY!);m.active=true;m.revokedBefore=now;
@@ -41,9 +41,9 @@ export async function POST(req:Request){
  const name=firstName?[firstName,lastName].filter(Boolean).join(' '):typeof body.name==='string'?body.name.trim():'';const role=body.role===undefined?'host':body.role;
  if(name.length<2||name.length>80||!validRole(role))return json({error:'Ստուգեք անունը և աշխատակցի դերը։'},400);
  const id=crypto.randomUUID();
- if(body.withoutCode===true){const m:StaffMember={id,name,firstName,lastName,jobTitle,role,active:false,codeHash:'',scheduleGroups:Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'):[],createdAt:now};await env.DB!.batch([env.DB!.prepare('INSERT INTO settings (key,value) VALUES (?,?)').bind('staff-member:'+id,JSON.stringify(m)),audit(who,'member.create','member',id,id,{name,role,active:false},now)]);return json({id,name,role,active:false},201);}
+ if(body.withoutCode===true){const m:StaffMember={id,name,firstName,lastName,jobTitle,role,active:false,codeHash:'',scheduleGroups:Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'||g==='host'):[],createdAt:now};await env.DB!.batch([env.DB!.prepare('INSERT INTO settings (key,value) VALUES (?,?)').bind('staff-member:'+id,JSON.stringify(m)),audit(who,'member.create','member',id,id,{name,role,active:false},now)]);return json({id,name,role,active:false},201);}
  const code=await availableCode(body.code);if(!code)return json({error:'Կոդը պետք է լինի 6 թվանշան և չկրկնվի։'},409);const codeHash=await codeDigest(code,env.STAFF_SESSION_KEY!);
- const m:StaffMember={id,name,firstName,lastName,jobTitle,role,scheduleGroups:Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'):[],active:true,codeHash,createdAt:now};
+ const m:StaffMember={id,name,firstName,lastName,jobTitle,role,scheduleGroups:Array.isArray(body.scheduleGroups)?body.scheduleGroups.filter(g=>g==='assistant'||g==='waiter'||g==='host'):[],active:true,codeHash,createdAt:now};
  await env.DB!.batch([env.DB!.prepare('INSERT INTO settings (key,value) VALUES (?,?)').bind('staff-member:'+id,JSON.stringify(m)),env.DB!.prepare('INSERT INTO settings (key,value) VALUES (?,?)').bind('staff-code:'+codeHash,id),audit(who,'member.create','member',id,id,{name,role},now)]);
  return json({id,name,role,code},201);
  }catch{return json({error:'Փոփոխությունը չի պահպանվել։'},503)}

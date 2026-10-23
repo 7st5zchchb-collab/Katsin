@@ -3,13 +3,26 @@ import {validRole,roleLabels,StaffRole} from './staff-roles';
 import {codeDigest,passwordDigest,equalDigest} from './staff-session';
 // Runtime-only roster; never put staff codes or live staff data in source control.
 export async function initializePendingRoster(actorName:string,actorId='manager'){
- const raw=(env as unknown as {STAFF_INITIAL_ROSTER?:string}).STAFF_INITIAL_ROSTER;if(!raw)return;
- const people=JSON.parse(raw) as {id:string,firstName:string,lastName:string,role:StaffRole,scheduleGroups:('assistant'|'waiter')[]}[];
+ const runtime=env as unknown as {STAFF_INITIAL_ROSTER?:string,STAFF_HOST_ROSTER?:string};
+ if(runtime.STAFF_INITIAL_ROSTER)await initializeRoster(runtime.STAFF_INITIAL_ROSTER,actorName,actorId);
+ if(runtime.STAFF_HOST_ROSTER){
+  const hosts=JSON.parse(runtime.STAFF_HOST_ROSTER) as {id:string,firstName:string,lastName:string,role:StaffRole,scheduleGroups:('assistant'|'waiter'|'host')[]}[];
+  if(!Array.isArray(hosts)||hosts.length>100||hosts.some(p=>p.role!=='host'))throw Error('Invalid host roster');
+  const marker='staff-host-roster-applied:'+await passwordDigest(runtime.STAFF_HOST_ROSTER);
+  if(await env.DB!.prepare('SELECT value FROM settings WHERE key=?').bind(marker).first())return;
+  const existing=await env.DB!.prepare("SELECT value FROM settings WHERE key >= 'staff-member:' AND key < 'staff-member;' AND json_extract(value,'$.role')='host'").all<{value:string}>();
+  const names=new Set(existing.results.map(r=>JSON.parse(r.value).name));
+  const additional=hosts.filter(p=>!names.has([p.firstName,p.lastName].filter(Boolean).join(' ')));
+  await initializeRoster(JSON.stringify(additional),actorName,actorId,marker);
+ }
+}
+async function initializeRoster(raw:string,actorName:string,actorId:string,marker?:string){
+ const people=JSON.parse(raw) as {id:string,firstName:string,lastName:string,role:StaffRole,scheduleGroups:('assistant'|'waiter'|'host')[]}[];
  if(!Array.isArray(people)||people.length>100)throw Error('Invalid initial roster');
- const rosterKey='staff-roster-applied:'+await passwordDigest(raw);
+ const rosterKey=marker||'staff-roster-applied:'+await passwordDigest(raw);
  if(await env.DB!.prepare('SELECT value FROM settings WHERE key=?').bind(rosterKey).first())return;
  const now=Date.now(),ops:D1PreparedStatement[]=[];
- for(const p of people){if(!/^[-a-z0-9]{8,80}$/.test(p.id)||typeof p.firstName!=='string'||typeof p.lastName!=='string'||!validRole(p.role)||!Array.isArray(p.scheduleGroups)||p.scheduleGroups.some(g=>!['assistant','waiter'].includes(g)))throw Error('Invalid initial roster');
+ for(const p of people){if(!/^[-a-z0-9]{8,80}$/.test(p.id)||typeof p.firstName!=='string'||typeof p.lastName!=='string'||!validRole(p.role)||!Array.isArray(p.scheduleGroups)||p.scheduleGroups.some(g=>!['assistant','waiter','host'].includes(g)))throw Error('Invalid initial roster');
  const name=[p.firstName,p.lastName].filter(Boolean).join(' '),key='staff-member:'+p.id;
  ops.push(env.DB!.prepare("INSERT INTO staff_activity(id,actor_id,actor_name,action,entity_type,entity_id,subject_id,details,created_at) SELECT ?,?,?,'member.create','member',?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM settings WHERE key=?)").bind(crypto.randomUUID(),actorId,actorName,p.id,p.id,JSON.stringify({name,role:p.role,active:false,source:'initial-roster'}),now,key));
  ops.push(env.DB!.prepare('INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)').bind(key,JSON.stringify({...p,name,jobTitle:roleLabels[p.role],active:false,codeHash:'',createdAt:now})));
